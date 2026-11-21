@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
