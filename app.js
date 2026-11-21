@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -240,7 +240,7 @@ async function shareOrDownload(blob, name, title) {
   }
   download(blob, name);
 }
-async function resizeImage(file, max = 1600) {
+async function resizeImage(file, max = 1600, quality = 0.82) {
   const bmp = await createImageBitmap(file).catch(() => null);
   let w, h, src;
   if (bmp) { w = bmp.width; h = bmp.height; src = bmp; }
@@ -251,7 +251,7 @@ async function resizeImage(file, max = 1600) {
   const s = Math.min(1, max / Math.max(w, h));
   const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
   c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-  return new Promise(res => c.toBlob(res, 'image/jpeg', 0.82));
+  return new Promise(res => c.toBlob(res, 'image/jpeg', quality));
 }
 
 /* ---------- state ---------- */
@@ -445,7 +445,74 @@ function openPhoto(p, url) {
     if (!confirm('Delete this photo?')) return;
     await DB.deletePhoto(p.id); dlg.close(); renderPhotos(); saveDay(); toast('Photo deleted');
   };
+  const entry = p.entryId && p.date === state.date ? state.day.log.find(e => e.id === p.entryId) : null;
+  const isReceipt = !!entry && /^Receipt\b/.test(entry.text);
+  $('#photoShare').textContent = isReceipt ? (/sent to Dext/.test(entry.text) ? 'Send to Dext again' : 'Send to Dext') : 'Share';
+  $('#photoShare').onclick = async () => {
+    if (isReceipt) { if (await sendReceipt(p.blob, p.date, p.time)) { markReceiptSent(entry); dlg.close(); } }
+    else await shareFile(new File([p.blob], `daybook-${p.date}.jpg`, { type: p.blob.type || 'image/jpeg' }), p.caption || 'Photo').catch(() => {});
+  };
 }
+
+/* ---------- receipts ---------- */
+const DEXT_KEY = 'daybook.dext';
+const dextAddr = () => { try { return (localStorage.getItem(DEXT_KEY) || '').trim(); } catch { return ''; } };
+async function shareFile(file, title) {
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title }); return true; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return false;
+}
+// Hands the receipt to the phone's share sheet with the Dext address ready to paste. Resolves true once shared.
+async function sendReceipt(blob, date, time) {
+  const addr = dextAddr();
+  if (!addr) { toast('Add your Dext address under More first'); return false; }
+  const file = new File([blob], `receipt-${date}${time ? '-' + time.replace(':', '') : ''}.jpg`, { type: blob.type || 'image/jpeg' });
+  try { navigator.clipboard.writeText(addr).catch(() => {}); } catch {}
+  try {
+    const shared = await shareFile(file, 'Receipt');
+    if (!shared) { location.href = 'mailto:' + addr + '?subject=Receipt'; toast('Receipt downloaded. Attach it to the email to Dext.'); }
+    return true;
+  } catch (err) { if (err.name !== 'AbortError') toast('Could not open sharing: ' + err.message); return false; }
+}
+function markReceiptSent(entry) {
+  if (/sent to Dext/.test(entry.text)) return;
+  entry.text += ' · sent to Dext'; renderLog(); saveDay(); toast('Marked as sent to Dext');
+}
+let receiptBlob = null;
+$('#receiptInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  receiptBlob = await resizeImage(f, 2200, 0.88).catch(() => f);
+  const url = URL.createObjectURL(receiptBlob);
+  $('#receiptImg').src = url; $('#receiptNote').value = '';
+  const addr = dextAddr();
+  $('#receiptSend').hidden = !addr;
+  $('#receiptHint').textContent = addr ? 'Send to Dext opens sharing. Choose Mail, paste the Dext address into To (it is copied for you) and send.' : 'To send receipts to Dext, add your Dext address under More, in Receipts.';
+  const dlg = $('#receiptDialog'); dlg.showModal();
+  dlg.addEventListener('close', () => URL.revokeObjectURL(url), { once: true });
+});
+async function saveReceipt() {
+  const note = $('#receiptNote').value.trim(), time = state.date === todayISO() ? nowHM() : '';
+  const entry = { id: uid(), time, text: 'Receipt' + (note ? ': ' + note : '') };
+  state.day.log.push(entry);
+  await DB.putPhoto({ id: uid(), date: state.date, time, caption: entry.text, entryId: entry.id, blob: receiptBlob });
+  renderLog(); await saveDay(); renderPhotos(); hideWelcome();
+  return { entry, time };
+}
+$('#receiptCancel').addEventListener('click', () => $('#receiptDialog').close());
+$('#receiptSave').addEventListener('click', async () => { await saveReceipt(); $('#receiptDialog').close(); toast('Receipt saved'); });
+$('#receiptSend').addEventListener('click', async () => {
+  // share first: iPhone only allows the share sheet straight from a tap
+  const blob = receiptBlob, date = state.date, sent = await sendReceipt(blob, date, state.date === todayISO() ? nowHM() : '');
+  const { entry } = await saveReceipt(); $('#receiptDialog').close();
+  if (sent) markReceiptSent(entry); else toast('Receipt saved, not sent yet. Open its photo to send it.');
+});
+$('#dextEmail').addEventListener('change', e => {
+  const v = e.target.value.trim();
+  if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { toast('That does not look like an email address'); return; }
+  try { v ? localStorage.setItem(DEXT_KEY, v) : localStorage.removeItem(DEXT_KEY); } catch {}
+  toast(v ? 'Dext address saved' : 'Dext address removed');
+});
 
 /* ---------- journal view ---------- */
 async function renderJournal() {
@@ -589,6 +656,7 @@ async function renderMore() {
   $('#ver').textContent = VERSION;
   Lock.refresh();
   if (typeof Sync !== 'undefined') Sync.render();
+  $('#dextEmail').value = dextAddr();
   let msg = 'Saved in this browser on this device.';
   if (navigator.storage?.estimate) {
     const { usage } = await navigator.storage.estimate();

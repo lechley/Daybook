@@ -374,3 +374,12 @@ body.locked { overflow: hidden; }
 .syncform .pill:disabled { opacity: .6; }
 #syncIn p { margin: 6px 0 8px; font-size: 15px; }
 #syncIn p.small { font-size: 13px; }
+
+/* Receipts */
+.quicklog .attach + input + .attach { margin-left: -8px; }
+#receiptDialog .eyebrow { margin: 2px 4px 8px; }
+#receiptDialog img { max-height: 52vh; background: var(--fill); }
+#receiptDialog p { margin: 8px 4px 0; }
+#receiptDialog .dlg-actions span { display: flex; align-items: center; gap: 2px; }
+.field { width: 100%; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--fill); outline: none; font-size: 17px; -webkit-appearance: none; }
+.field + p { margin: 8px 0 0; }
