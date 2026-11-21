@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -223,7 +223,11 @@ async function readZip(blob) { // returns [{name, data}] for stored or deflated 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2200); }
+function toast(msg, action) {
+  const t = $('#toast'); t.textContent = msg; t.classList.toggle('action', !!action);
+  if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = () => { t.classList.remove('show'); action.fn(); }; t.appendChild(b); }
+  t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2200);
+}
 function autosize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
 function download(blob, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
@@ -251,7 +255,7 @@ async function resizeImage(file, max = 1600) {
 }
 
 /* ---------- state ---------- */
-const state = { date: todayISO(), day: null, view: 'day', calMonth: todayISO().slice(0, 7), urls: [] };
+const state = { date: todayISO(), day: null, view: 'day', calMonth: todayISO().slice(0, 7), urls: [], photos: [], urlById: {}, pending: [] };
 let saveTimer;
 function scheduleSave(field) {
   clearTimeout(saveTimer);
@@ -269,10 +273,14 @@ async function saveDay() {
 async function loadDay(date) {
   clearTimeout(saveTimer);
   if (state.day) await saveDay();
+  const dir = state.day && date !== state.date ? (date > state.date ? 'next' : 'prev') : '';
   state.date = date;
   state.day = (await DB.getDay(date)) || blankDay(date);
   for (const k of ['media', 'conversations']) if (state.day[k] == null) state.day[k] = '';
   renderDay();
+  const v = $('#view-day');
+  v.classList.remove('slide-next', 'slide-prev');
+  if (dir && state.view === 'day') { void v.offsetWidth; v.classList.add('slide-' + dir); window.scrollTo(0, 0); }
 }
 function renderHeader() {
   const t = todayISO();
@@ -303,41 +311,75 @@ async function renderGlance() {
     item(timed.length ? timed[0] : '—', 'first entry'),
   ].join('');
 }
+function deleteEntry(id) {
+  const idx = state.day.log.findIndex(x => x.id === id); if (idx < 0) return;
+  const [removed] = state.day.log.splice(idx, 1), date = state.date;
+  renderLog(); saveDay();
+  toast('Entry deleted', { label: 'Undo', fn: () => { if (state.date !== date) return; state.day.log.push(removed); renderLog(); saveDay(); } });
+}
 function renderLog() {
   const list = $('#logList'); list.innerHTML = '';
   const entries = [...state.day.log].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   for (const e of entries) {
     const li = document.createElement('li');
-    li.innerHTML = `<time>${esc(e.time || '·')}</time><span class="txt" contenteditable="true" spellcheck="true">${esc(e.text)}</span><button class="del" aria-label="Delete entry">×</button>`;
-    const txt = li.querySelector('.txt');
+    li.dataset.id = e.id;
+    li.innerHTML = `<span class="swipe-bg">Delete</span><div class="row"><label class="time"><span>${esc(e.time || 'Time')}</span><input type="time" value="${esc(e.time || '')}" aria-label="Change time"></label><div class="body"><span class="txt" contenteditable="true" spellcheck="true">${esc(e.text)}</span><div class="ephotos"></div></div><button class="del" aria-label="Delete entry">×</button></div>`;
+    const txt = li.querySelector('.txt'), row = li.querySelector('.row');
     txt.addEventListener('blur', () => {
       const v = txt.textContent.trim();
-      if (!v) { state.day.log = state.day.log.filter(x => x.id !== e.id); renderLog(); }
-      else e.text = v;
-      saveDay();
+      if (!v) { deleteEntry(e.id); return; }
+      e.text = v; saveDay(); renderGlance();
     });
     txt.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); txt.blur(); } });
-    li.querySelector('.del').addEventListener('click', () => {
-      state.day.log = state.day.log.filter(x => x.id !== e.id); renderLog(); saveDay(); toast('Entry deleted');
+    li.querySelector('.del').addEventListener('click', () => deleteEntry(e.id));
+    li.querySelector('input[type=time]').addEventListener('change', ev => { e.time = ev.target.value || ''; renderLog(); saveDay(); });
+    // swipe left to delete
+    let sx = 0, sy = 0, dx = 0, mode = null;
+    li.addEventListener('touchstart', ev => { const t = ev.touches[0]; sx = t.clientX; sy = t.clientY; dx = 0; mode = null; row.style.transition = 'none'; }, { passive: true });
+    li.addEventListener('touchmove', ev => {
+      const t = ev.touches[0], ddx = t.clientX - sx, ddy = t.clientY - sy;
+      if (mode === null) { if (Math.abs(ddx) > 10 && Math.abs(ddx) > Math.abs(ddy)) mode = 'h'; else if (Math.abs(ddy) > 10) mode = 'v'; }
+      if (mode === 'h') { dx = Math.min(0, ddx); row.style.transform = `translateX(${dx}px)`; li.classList.toggle('armed', dx < -90); }
+    }, { passive: true });
+    li.addEventListener('touchend', () => {
+      row.style.transition = '';
+      if (mode === 'h' && dx < -90) { row.style.transform = 'translateX(-100%)'; setTimeout(() => deleteEntry(e.id), 160); }
+      else { row.style.transform = ''; li.classList.remove('armed'); }
     });
     list.appendChild(li);
   }
   $('#logEmpty').hidden = entries.length > 0;
   $('#logCount').textContent = entries.length ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}` : '';
+  fillEntryPhotos();
   renderGlance();
 }
+function fillEntryPhotos() {
+  for (const li of document.querySelectorAll('#logList li')) {
+    const box = li.querySelector('.ephotos'); box.innerHTML = '';
+    for (const p of state.photos.filter(p => p.entryId === li.dataset.id)) {
+      const url = state.urlById[p.id]; if (!url) continue;
+      const b = document.createElement('button'); b.type = 'button';
+      b.innerHTML = `<img src="${url}" alt="${esc(p.caption || 'Photo')}">`;
+      b.addEventListener('click', () => openPhoto(p, url));
+      box.appendChild(b);
+    }
+  }
+}
 async function renderPhotos() {
-  state.urls.forEach(u => URL.revokeObjectURL(u)); state.urls = [];
+  const date = state.date;
+  const photos = (await DB.photosFor(date)).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  if (date !== state.date) return;
+  state.urls.forEach(u => URL.revokeObjectURL(u)); state.urls = []; state.urlById = {}; state.photos = photos;
   const grid = $('#photoGrid'); grid.innerHTML = '';
-  const photos = (await DB.photosFor(state.date)).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   for (const p of photos) {
-    const url = URL.createObjectURL(p.blob); state.urls.push(url);
+    const url = URL.createObjectURL(p.blob); state.urls.push(url); state.urlById[p.id] = url;
     const b = document.createElement('button');
     b.innerHTML = `<img src="${url}" alt="${esc(p.caption || 'Photo')}">`;
     b.addEventListener('click', () => openPhoto(p, url));
     grid.appendChild(b);
   }
   grid.insertAdjacentHTML('beforeend', '<label class="add" for="photoInput" aria-label="Add photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></label>');
+  fillEntryPhotos();
   renderGlance();
 }
 function renderDay() {
@@ -350,10 +392,37 @@ function renderDay() {
   $('#convView').innerHTML = conv ? mdBlockToHTML(conv) : '';
   $('#quickInput').placeholder = state.date === todayISO() ? 'What did you just do?' : `Add to ${shortDate(state.date)}…`;
 }
+function notesSections(src) {
+  const lines = src.replace(/\r/g, '').split('\n');
+  const pre = [], secs = [];
+  for (const line of lines) {
+    const m = line.match(/^#{1,6}\s+(.*)$/);
+    if (m) secs.push({ title: m[1].trim(), body: [] });
+    else (secs.length ? secs[secs.length - 1].body : pre).push(line);
+  }
+  return { pre: pre.join('\n').trim(), secs };
+}
 function showRendered(k) {
   const el = $('#' + k), view = $('#' + k + 'View');
-  const has = !!(state.day[k] || '').trim();
-  view.innerHTML = has ? mdToHTML(state.day[k]) : '';
+  const src = state.day[k] || '', has = !!src.trim();
+  let html = has ? mdToHTML(src) : '', sectioned = false;
+  if (k === 'notes' && has) {
+    const { pre, secs } = notesSections(src);
+    if (secs.length >= 2) {
+      sectioned = true;
+      const open = src.length < 700 ? ' open' : '';
+      html = (pre ? mdToHTML(pre) : '') + secs.map(s => {
+        const body = s.body.join('\n').trim();
+        const items = (body.match(/^\s*([-*+•]|\d+[.)])\s+/gm) || []).length;
+        const empty = !body || /^[-*+•]?\s*\(?none\)?\.?$/i.test(body);
+        const meta = empty ? 'None' : items ? String(items) : '';
+        return `<details class="sec"${empty ? '' : open}><summary><span>${mdInlineToHTML(s.title)}</span><em>${meta}</em></summary><div class="sec-body">${empty ? '<p class="muted">Nothing recorded.</p>' : mdToHTML(body)}</div></details>`;
+      }).join('');
+    }
+    view.classList.toggle('sectioned', sectioned);
+    $('#notesEdit').hidden = false;
+  } else if (k === 'notes') $('#notesEdit').hidden = true;
+  view.innerHTML = html;
   view.hidden = !has; el.hidden = has;
   if (!has) autosize(el);
 }
@@ -390,6 +459,9 @@ async function renderJournal() {
     <div class="stat"><b>${streak}</b><span>day streak</span></div>
     <div class="stat"><b>${dates.size}</b><span>days written</span></div>
     <div class="stat"><b>${entries}</b><span>log entries</span></div>`;
+
+  renderLookBack(dayBy);
+  $('#weekHint').textContent = 'Summaries and totals, week by week';
 
   // calendar
   const [y, m] = state.calMonth.split('-').map(Number);
@@ -511,6 +583,7 @@ function switchView(v) {
 }
 async function renderMore() {
   $('#ver').textContent = VERSION;
+  Lock.refresh();
   let msg = 'Saved in this browser on this device.';
   if (navigator.storage?.estimate) {
     const { usage } = await navigator.storage.estimate();
@@ -521,19 +594,234 @@ async function renderMore() {
 }
 
 /* ---------- wire up ---------- */
-$('#quickLog').addEventListener('submit', e => {
+$('#quickLog').addEventListener('submit', async e => {
   e.preventDefault();
-  const v = $('#quickInput').value.trim(); if (!v) return;
+  const v = $('#quickInput').value.trim(), pend = state.pending;
+  if (!v && !pend.length) return;
   const time = state.date === todayISO() ? nowHM() : '';
-  state.day.log.push({ id: uid(), time, text: v });
+  const entry = { id: uid(), time, text: v || (pend.length > 1 ? 'Photos' : 'Photo') };
+  state.day.log.push(entry);
   $('#quickInput').value = '';
-  renderLog(); saveDay();
+  state.pending = []; renderPending();
+  for (const blob of pend) await DB.putPhoto({ id: uid(), date: state.date, time, caption: '', entryId: entry.id, blob });
+  renderLog(); await saveDay();
+  if (pend.length) renderPhotos();
+  hideWelcome();
 });
+function renderPending() {
+  const strip = $('#pendingStrip'); strip.innerHTML = ''; strip.hidden = !state.pending.length;
+  $('#quickLog').classList.toggle('has-pending', !!state.pending.length);
+  state.pending.forEach((blob, i) => {
+    const u = URL.createObjectURL(blob);
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Remove photo');
+    b.innerHTML = `<img src="${u}" alt=""><span>×</span>`;
+    b.onclick = () => { state.pending.splice(i, 1); renderPending(); };
+    strip.appendChild(b);
+  });
+}
+$('#attachInput').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  for (const f of files) state.pending.push(await resizeImage(f).catch(() => f));
+  renderPending(); $('#quickInput').focus();
+});
+$('#notesEdit').addEventListener('click', () => editField('notes'));
+
+/* ---------- swipe between days ---------- */
+(() => {
+  const v = $('#view-day'); let sx = 0, sy = 0, ok = false;
+  v.addEventListener('touchstart', e => {
+    ok = !e.target.closest('.log li, input, textarea, [contenteditable], .pending');
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY;
+  }, { passive: true });
+  v.addEventListener('touchend', e => {
+    if (!ok) return;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    if (dx > 0) loadDay(addDays(state.date, -1));
+    else if (state.date < todayISO()) loadDay(addDays(state.date, 1));
+  });
+})();
+
+/* ---------- welcome ---------- */
+function hideWelcome() { $('#welcome').hidden = true; try { localStorage.setItem('daybook.welcomed', '1'); } catch {} }
+async function maybeWelcome() {
+  let seen = false; try { seen = !!localStorage.getItem('daybook.welcomed'); } catch {}
+  if (seen) return;
+  if ((await DB.allDays()).length) { hideWelcome(); return; }
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  $('#a2hsTip').hidden = !!standalone;
+  $('#welcome').hidden = false;
+}
+$('#welcomeOk').addEventListener('click', () => { hideWelcome(); $('#quickInput').focus(); });
+
+/* ---------- looking back + weekly review ---------- */
+function daySnippet(day) {
+  return mdToPlain(day.endOfDay || day.log.map(e => e.text).join(' · ') || day.notes || '').replace(/\s+/g, ' ').trim();
+}
+function renderLookBack(dayBy) {
+  const t = parseISO(todayISO()), picks = [];
+  const shift = (label, fn) => { const d = new Date(t); fn(d); picks.push([label, isoDate(d)]); };
+  shift('A week ago', d => d.setDate(d.getDate() - 7));
+  shift('A month ago', d => d.setMonth(d.getMonth() - 1));
+  shift('Three months ago', d => d.setMonth(d.getMonth() - 3));
+  shift('Six months ago', d => d.setMonth(d.getMonth() - 6));
+  for (let y = 1; y <= 10; y++) shift(y === 1 ? 'A year ago today' : `${y} years ago today`, d => d.setFullYear(d.getFullYear() - y));
+  const box = $('#lookBack'); box.innerHTML = '';
+  for (const [label, date] of picks) {
+    const day = dayBy[date]; if (!day || isEmptyDay(day)) continue;
+    const snip = daySnippet(day); if (!snip) continue;
+    const b = document.createElement('button'); b.className = 'daycard';
+    b.innerHTML = `<div class="d"><span>${esc(label)}</span><small>${esc(shortDate(date))}</small></div><p>${esc(snip.slice(0, 200))}</p>`;
+    b.addEventListener('click', () => { switchView('day'); loadDay(date); });
+    box.appendChild(b);
+  }
+  $('#lookBackWrap').hidden = !box.children.length;
+}
+const weekStart = iso => { const d = parseISO(iso); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoDate(d); };
+const week = { start: weekStart(todayISO()), md: '' };
+async function renderWeek() {
+  const [days, photos] = await Promise.all([DB.allDays(), DB.allPhotos()]);
+  const dayBy = Object.fromEntries(days.map(d => [d.date, d]));
+  const s = parseISO(week.start), e = parseISO(addDays(week.start, 6));
+  const title = s.getMonth() === e.getMonth() ? `${s.getDate()}–${e.getDate()} ${MON[e.getMonth()]}` : `${s.getDate()} ${MON[s.getMonth()].slice(0, 3)} – ${e.getDate()} ${MON[e.getMonth()].slice(0, 3)}`;
+  $('#weekTitle').textContent = title + (e.getFullYear() !== new Date().getFullYear() ? ` ${e.getFullYear()}` : '');
+  $('#weekNext').disabled = week.start >= weekStart(todayISO());
+  let written = 0, entries = 0, pics = 0; const parts = [], md = [`# Week of ${longDate(week.start)}`, ''];
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(week.start, i); if (date > todayISO()) break;
+    const day = dayBy[date], n = photos.filter(p => p.date === date).length; pics += n;
+    const has = day && !isEmptyDay(day);
+    if (has) { written++; entries += day.log.length; }
+    const d = parseISO(date), head = `${DOW[d.getDay()]} ${d.getDate()}`;
+    let body = '<p class="muted">Nothing written.</p>', mdBody = '_Nothing written._';
+    if (has) {
+      if (day.endOfDay.trim()) { body = mdToHTML(day.endOfDay); mdBody = day.endOfDay.trim(); }
+      else if (day.log.length) { const l = [...day.log].sort((a, b) => (a.time || '').localeCompare(b.time || '')).map(x => `- ${x.time ? x.time + ' ' : ''}${x.text}`).join('\n'); body = mdToHTML(l); mdBody = l; }
+      else { const sn = daySnippet(day).slice(0, 300); body = `<p>${esc(sn)}</p>`; mdBody = sn; }
+    }
+    const meta = has ? [day.log.length ? `${day.log.length} logged` : '', n ? `${n} photo${n > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ') : '';
+    parts.push(`<section class="wk-day${has ? '' : ' off'}" data-date="${date}"><h4>${head}<small>${meta}</small></h4><div class="md">${body}</div></section>`);
+    md.push(`## ${longDate(date)}`, mdBody, '');
+  }
+  week.md = md.join('\n');
+  $('#weekBody').innerHTML = `<div class="stats"><div class="stat"><b>${written}</b><span>days written</span></div><div class="stat"><b>${entries}</b><span>log entries</span></div><div class="stat"><b>${pics}</b><span>photos</span></div></div>` + parts.join('');
+  $('#weekBody').scrollTop = 0;
+}
+$('#openWeek').addEventListener('click', async () => { week.start = weekStart(todayISO()); await renderWeek(); $('#weekDialog').showModal(); });
+$('#weekPrev').addEventListener('click', () => { week.start = addDays(week.start, -7); renderWeek(); });
+$('#weekNext').addEventListener('click', () => { week.start = addDays(week.start, 7); renderWeek(); });
+$('#weekClose').addEventListener('click', () => $('#weekDialog').close());
+$('#weekShare').addEventListener('click', () => shareOrDownload(new Blob([week.md], { type: 'text/markdown' }), `week-${week.start}.md`, 'Weekly review'));
+$('#weekBody').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const sec = e.target.closest('.wk-day'); if (!sec) return;
+  $('#weekDialog').close(); switchView('day'); loadDay(sec.dataset.date);
+});
+
+/* ---------- privacy lock ---------- */
+const Lock = (() => {
+  const KEY = 'daybook.lock';
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } };
+  const write = v => { try { v ? localStorage.setItem(KEY, JSON.stringify(v)) : localStorage.removeItem(KEY); } catch {} };
+  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const hash = async (salt, code) => b64(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + code)));
+  const bioOK = () => !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+  let mode = null, code = '', first = '', done = null, hiddenAt = 0, tries = 0;
+  const el = $('#lock');
+  const show = (m, cb) => {
+    mode = m; code = ''; done = cb || null;
+    $('#lockTitle').textContent = { unlock: 'Enter passcode', verify: 'Enter current passcode', set1: 'Choose a 4-digit passcode', set2: 'Enter it again to confirm' }[m];
+    $('#lockSub').innerHTML = '&nbsp;';
+    $('#lockCancel').hidden = m === 'unlock';
+    $('#lockForgot').hidden = m !== 'unlock';
+    el.querySelector('[data-k=bio]').style.visibility = m === 'unlock' && read()?.cred && bioOK() ? 'visible' : 'hidden';
+    dots(); el.hidden = false; document.body.classList.add('locked');
+  };
+  const hide = () => { el.hidden = true; mode = null; document.body.classList.remove('locked'); };
+  const dots = () => [...$('#lockDots').children].forEach((d, i) => d.classList.toggle('on', i < code.length));
+  const fail = msg => { $('#lockSub').textContent = msg; code = ''; dots(); $('#lockDots').classList.remove('shake'); void $('#lockDots').offsetWidth; $('#lockDots').classList.add('shake'); };
+  async function submit() {
+    const cfg = read();
+    if (mode === 'unlock' || mode === 'verify') {
+      if (await hash(cfg.salt, code) === cfg.hash) { tries = 0; const cb = done; hide(); cb && cb(); }
+      else { tries++; fail(tries >= 3 ? 'Wrong passcode. Take your time.' : 'Wrong passcode'); }
+    } else if (mode === 'set1') { first = code; show('set2', done); }
+    else if (mode === 'set2') {
+      if (code !== first) { show('set1', done); fail('Those did not match. Try again.'); return; }
+      const salt = b64(crypto.getRandomValues(new Uint8Array(12)));
+      write({ salt, hash: await hash(salt, code), cred: null });
+      const cb = done; hide(); toast('Passcode is on'); cb && cb();
+    }
+  }
+  function press(k) {
+    if (k === 'bio') return bioUnlock();
+    if (k === 'del') { code = code.slice(0, -1); dots(); return; }
+    if (code.length >= 4) return;
+    code += k; dots();
+    if (code.length === 4) setTimeout(submit, 120);
+  }
+  async function bioUnlock() {
+    const cfg = read(); if (!cfg?.cred) return;
+    try {
+      await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64(cfg.cred), transports: ['internal'] }], userVerification: 'required', timeout: 60000 } });
+      tries = 0; const cb = done; hide(); cb && cb();
+    } catch { $('#lockSub').textContent = 'Could not verify. Use your passcode.'; }
+  }
+  async function bioEnroll() {
+    const cfg = read(); if (!cfg) return;
+    try {
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)), rp: { name: 'Daybook' },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'daybook', displayName: 'Daybook' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' }, timeout: 60000 } });
+      write({ ...cfg, cred: b64(cred.rawId) }); toast('Face ID / Touch ID is on');
+    } catch { toast('Could not turn that on for this device'); }
+    refresh();
+  }
+  function refresh() {
+    const cfg = read();
+    $('#lockSet').textContent = cfg ? 'Change passcode' : 'Turn on passcode';
+    $('#lockOff').hidden = !cfg;
+    $('#lockBio').hidden = !cfg || !bioOK();
+    $('#lockBio').textContent = cfg?.cred ? 'Turn off Face ID / Touch ID' : 'Use Face ID or Touch ID';
+    $('#lockInfo').textContent = cfg ? 'Lock is on. Daybook asks for your passcode when it opens. Keep a note of it: it cannot be recovered.' : 'Ask for a passcode whenever Daybook opens.';
+  }
+  // keypad
+  const pad = $('#keypad');
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'bio', '0', 'del']) {
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.k = k;
+    b.innerHTML = k === 'bio' ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 10v1M15 10v1M12 10v3h-1M9 15.500c1.800 1.300 4.200 1.300 6 0"/></svg>' : k === 'del' ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6 6-6zM12 10l4 4M16 10l-4 4"/></svg>' : k;
+    b.setAttribute('aria-label', k === 'bio' ? 'Use Face ID or Touch ID' : k === 'del' ? 'Delete' : k);
+    b.addEventListener('click', () => press(k));
+    pad.appendChild(b);
+  }
+  document.addEventListener('keydown', e => { if (!mode) return; if (/^\d$/.test(e.key)) press(e.key); else if (e.key === 'Backspace') press('del'); });
+  $('#lockCancel').addEventListener('click', hide);
+  $('#lockForgot').addEventListener('click', async () => {
+    if (!confirm('The passcode cannot be recovered. You can reset the lock, but that ERASES the journal stored on this device. Erase and reset?')) return;
+    if (!confirm('Last check: delete every entry and photo on this device?')) return;
+    await new Promise(r => { const q = indexedDB.deleteDatabase('daybook'); q.onsuccess = q.onerror = q.onblocked = r; });
+    write(null); location.reload();
+  });
+  $('#lockSet').addEventListener('click', () => { const go = () => show('set1', refresh); read() ? show('verify', go) : go(); });
+  $('#lockOff').addEventListener('click', () => show('verify', () => { write(null); refresh(); toast('Lock is off'); }));
+  $('#lockBio').addEventListener('click', () => { const cfg = read(); if (cfg?.cred) { write({ ...cfg, cred: null }); refresh(); toast('Face ID / Touch ID is off'); } else bioEnroll(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!read()) return;
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); if (!mode) { show('unlock'); el.dataset.auto = '1'; } }
+    else if (el.dataset.auto && mode === 'unlock' && Date.now() - hiddenAt < 30000) { delete el.dataset.auto; hide(); }
+    else delete el.dataset.auto;
+  });
+  return { start: () => { if (read()) show('unlock'); }, refresh };
+})();
+
 for (const k of ['notes', 'endOfDay']) {
   const el = $('#' + k);
   el.addEventListener('input', () => { state.day[k] = el.value; autosize(el); scheduleSave(k); renderGlance(); });
   el.addEventListener('blur', () => showRendered(k));
-  $('#' + k + 'View').addEventListener('click', e => { if (!e.target.closest('a')) editField(k); });
+  $('#' + k + 'View').addEventListener('click', e => { if (!e.target.closest('a') && !e.currentTarget.classList.contains('sectioned')) editField(k); });
 }
 $('#photoInput').addEventListener('change', async e => {
   const files = [...e.target.files]; e.target.value = '';
@@ -570,8 +858,10 @@ document.addEventListener('visibilitychange', () => {
 });
 
 (async () => {
+  Lock.start();
   navigator.storage?.persist?.().catch(() => {});
   await loadDay(todayISO());
+  maybeWelcome();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 

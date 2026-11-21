@@ -30,6 +30,18 @@
   <main id="views">
     <!-- DAY -->
     <section class="view" id="view-day">
+      <div class="card welcome" id="welcome" hidden>
+        <h2>Welcome to Daybook</h2>
+        <p class="muted">A private journal that lives on this device.</p>
+        <ul class="tips">
+          <li><b>Log as you go.</b> Type what you just did and it is saved with the time.</li>
+          <li><b>Sum up the day.</b> A few lines in Summary is enough.</li>
+          <li><b>Look back.</b> The Journal tab has your calendar, search and weekly review.</li>
+        </ul>
+        <p class="muted small" id="a2hsTip" hidden>Tip: in Safari, tap Share then <b>Add to Home Screen</b> to use it like an app.</p>
+        <button class="pill" id="welcomeOk">Start writing</button>
+      </div>
+
       <div class="summary card">
         <div class="summary-head"><span>Summary</span><span class="saved" data-for="endOfDay"></span></div>
         <div class="md rendered" id="endOfDayView" data-for="endOfDay"></div>
@@ -38,14 +50,17 @@
       </div>
 
       <form class="quicklog" id="quickLog" autocomplete="off">
+        <label class="attach" for="attachInput" aria-label="Attach a photo to this entry"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1.2-2h6.2l1.2 2h1.2A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.500 19h-11A2.5 2.5 0 0 1 4 16.500z"/><circle cx="12" cy="12.500" r="3.200"/></svg></label>
+        <input type="file" id="attachInput" accept="image/*" multiple hidden>
         <input id="quickInput" type="text" placeholder="What did you just do?" enterkeyhint="done" aria-label="Log an entry">
         <button type="submit" class="send" aria-label="Add to log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
       </form>
+      <div class="pending" id="pendingStrip" hidden></div>
 
       <div class="section-label"><span>Log</span><span class="count" id="logCount"></span></div>
       <div class="card">
         <ul class="log" id="logList"></ul>
-        <p class="empty" id="logEmpty">Nothing logged yet. Each entry gets the time it was added.</p>
+        <p class="empty" id="logEmpty">Nothing logged yet. Each entry gets the time it was added. Swipe an entry left to delete it.</p>
       </div>
 
       <div class="section-label"><span>Photos</span></div>
@@ -54,7 +69,7 @@
         <div class="photos" id="photoGrid"></div>
       </div>
 
-      <div class="section-label"><span>Notes</span><span class="saved" data-for="notes"></span></div>
+      <div class="section-label"><span>Notes</span><span><span class="saved" data-for="notes"></span> <button class="label-btn" id="notesEdit" hidden>Edit</button></span></div>
       <div class="card">
         <div class="md rendered" id="notesView" data-for="notes"></div>
         <textarea id="notes" rows="4" placeholder="Thoughts, ideas, things to remember…"></textarea>
@@ -74,6 +89,11 @@
     <!-- JOURNAL -->
     <section class="view" id="view-journal" hidden>
       <div class="stats" id="stats"></div>
+      <button class="card linkrow" id="openWeek"><span><b>Weekly review</b><small id="weekHint">This week so far</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+      <div id="lookBackWrap" hidden>
+        <div class="section-label"><span>Looking back</span></div>
+        <div id="lookBack" class="listcard"></div>
+      </div>
       <div class="card cal">
         <div class="cal-head">
           <button class="icon-btn small" id="calPrev" aria-label="Previous month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
@@ -96,6 +116,13 @@
         <label class="row-btn" for="importInput">Import daily pages (.md or .zip)</label>
         <input type="file" id="importInput" accept=".md,.markdown,.zip,text/markdown,application/zip" multiple hidden>
         <p class="muted small">Pages use the same layout as your project journal: one <code>YYYY-MM-DD.md</code> per day with Log, Notes, Conversations, Media and End of day.</p>
+      </div>
+      <div class="card">
+        <h2>Privacy lock</h2>
+        <p class="muted" id="lockInfo">Ask for a passcode whenever Daybook opens.</p>
+        <button class="row-btn" id="lockSet">Turn on passcode</button>
+        <button class="row-btn" id="lockBio" hidden>Use Face ID or Touch ID</button>
+        <button class="row-btn danger" id="lockOff" hidden>Turn off lock</button>
       </div>
       <div class="card">
         <h2>Daily reminder</h2>
@@ -132,6 +159,31 @@
     <button class="pill" id="photoClose">Done</button>
   </div>
 </dialog>
+
+<dialog id="weekDialog" class="sheet">
+  <div class="sheet-head">
+    <button class="icon-btn small" id="weekPrev" aria-label="Previous week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div><div class="eyebrow">Weekly review</div><h2 id="weekTitle"></h2></div>
+    <button class="icon-btn small" id="weekNext" aria-label="Next week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+  <div class="sheet-body" id="weekBody"></div>
+  <div class="dlg-actions">
+    <button class="text-btn" id="weekShare">Share</button>
+    <button class="pill" id="weekClose">Done</button>
+  </div>
+</dialog>
+
+<div id="lock" hidden>
+  <div class="lock-inner">
+    <svg class="lock-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.500" width="14" height="10" rx="2.500"/><path d="M8 10.500V8a4 4 0 0 1 8 0v2.500"/></svg>
+    <h2 id="lockTitle">Enter passcode</h2>
+    <p class="muted small" id="lockSub">&nbsp;</p>
+    <div class="dots" id="lockDots"><i></i><i></i><i></i><i></i></div>
+    <div class="keypad" id="keypad"></div>
+    <button class="text-btn" id="lockCancel" hidden>Cancel</button>
+    <button class="text-btn muted small" id="lockForgot" hidden>Forgot passcode?</button>
+  </div>
+</div>
 
 <div class="toast" id="toast" role="status"></div>
 <script src="app.js"></script>
