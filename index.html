@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Daybook</title>
 <meta name="description" content="A private daily journal that lives on your Home Screen.">
-<meta name="theme-color" content="#F6F1E7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1B2421" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -19,54 +19,53 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <button class="icon-btn" id="prevDay" aria-label="Previous day">‹</button>
+    <button class="icon-btn" id="prevDay" aria-label="Previous day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
     <div class="titlewrap">
       <div class="eyebrow" id="eyebrow"></div>
       <h1 id="title">Daybook</h1>
     </div>
-    <button class="icon-btn" id="nextDay" aria-label="Next day">›</button>
+    <button class="icon-btn" id="nextDay" aria-label="Next day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
   </header>
 
   <main id="views">
     <!-- DAY -->
     <section class="view" id="view-day">
+      <div class="summary card">
+        <div class="summary-head"><span>Summary</span><span class="saved" data-for="endOfDay"></span></div>
+        <textarea id="endOfDay" rows="2" placeholder="Sum up the day in a few lines…"></textarea>
+        <div class="glance" id="glance"></div>
+      </div>
+
       <form class="quicklog" id="quickLog" autocomplete="off">
         <input id="quickInput" type="text" placeholder="What did you just do?" enterkeyhint="done" aria-label="Log an entry">
-        <button type="submit" class="pill">Log</button>
+        <button type="submit" class="send" aria-label="Add to log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
       </form>
 
+      <div class="section-label"><span>Log</span><span class="count" id="logCount"></span></div>
       <div class="card">
-        <div class="card-head"><h2>Log</h2><span class="count" id="logCount"></span></div>
         <ul class="log" id="logList"></ul>
         <p class="empty" id="logEmpty">Nothing logged yet. Each entry gets the time it was added.</p>
       </div>
 
+      <div class="section-label"><span>Photos</span></div>
       <div class="card">
-        <div class="card-head"><h2>Photos</h2>
-          <label class="pill ghost" for="photoInput">Add photo</label>
-          <input type="file" id="photoInput" accept="image/*" multiple hidden>
-        </div>
+        <input type="file" id="photoInput" accept="image/*" multiple hidden>
         <div class="photos" id="photoGrid"></div>
-        <p class="empty" id="photoEmpty">Add photos from today. They stay on this phone.</p>
       </div>
 
+      <div class="section-label"><span>Notes</span><span class="saved" data-for="notes"></span></div>
       <div class="card">
-        <div class="card-head"><h2>Notes</h2><span class="saved" data-for="notes"></span></div>
         <textarea id="notes" rows="4" placeholder="Thoughts, ideas, things to remember…"></textarea>
       </div>
 
-      <div class="card" id="convCard" hidden>
-        <div class="card-head"><h2>Conversations</h2></div>
-        <div class="md" id="convView"></div>
+      <div id="convCard" hidden>
+        <div class="section-label"><span>Conversations</span></div>
+        <div class="card"><div class="md" id="convView"></div></div>
       </div>
 
-      <div class="card">
-        <div class="card-head"><h2>End of day</h2><span class="saved" data-for="endOfDay"></span></div>
-        <textarea id="endOfDay" rows="3" placeholder="How did today go, in a few lines?"></textarea>
-      </div>
 
       <div class="dayactions">
-        <button class="pill ghost" id="shareDay">Share this day</button>
+        <button class="text-btn" id="shareDay">Share this day</button>
       </div>
     </section>
 
@@ -75,9 +74,9 @@
       <div class="stats" id="stats"></div>
       <div class="card cal">
         <div class="cal-head">
-          <button class="icon-btn small" id="calPrev" aria-label="Previous month">‹</button>
+          <button class="icon-btn small" id="calPrev" aria-label="Previous month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
           <h2 id="calTitle"></h2>
-          <button class="icon-btn small" id="calNext" aria-label="Next month">›</button>
+          <button class="icon-btn small" id="calNext" aria-label="Next month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
         </div>
         <div class="cal-grid" id="calGrid"></div>
       </div>
@@ -117,9 +116,9 @@
   </main>
 
   <nav class="tabbar">
-    <button data-view="day" class="active"><span class="ti">✎</span><span>Today</span></button>
-    <button data-view="journal"><span class="ti">▦</span><span>Journal</span></button>
-    <button data-view="more"><span class="ti">⋯</span><span>More</span></button>
+    <button data-view="day" class="active"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>Today</span></button>
+    <button data-view="journal"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Journal</span></button>
+    <button data-view="more"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="8" cy="12" r=".6" class="f"/><circle cx="12" cy="12" r=".6" class="f"/><circle cx="16" cy="12" r=".6" class="f"/></svg><span>More</span></button>
   </nav>
 </div>
 
@@ -127,7 +126,7 @@
   <img id="photoBig" alt="">
   <input id="photoCaption" type="text" placeholder="Caption">
   <div class="dlg-actions">
-    <button class="pill ghost danger" id="photoDelete">Delete</button>
+    <button class="text-btn danger" id="photoDelete">Delete</button>
     <button class="pill" id="photoClose">Done</button>
   </div>
 </dialog>

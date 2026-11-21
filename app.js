@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -239,10 +239,9 @@ function renderHeader() {
   const t = todayISO();
   if (state.view === 'day') {
     const diff = Math.round((parseISO(state.date) - parseISO(t)) / 864e5);
-    $('#eyebrow').textContent = diff === 0 ? 'Today' : diff === -1 ? 'Yesterday' : diff === 1 ? 'Tomorrow' : parseISO(state.date).toLocaleDateString('en-GB', { weekday: 'long' });
-    $('#title').textContent = diff >= -1 && diff <= 1
-      ? parseISO(state.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
-      : parseISO(state.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const dd = parseISO(state.date), wd = DOW[dd.getDay()];
+    $('#eyebrow').textContent = diff === 0 ? `Today · ${wd}` : diff === -1 ? `Yesterday · ${wd}` : wd;
+    $('#title').textContent = `${dd.getDate()} ${MON[dd.getMonth()]}` + (dd.getFullYear() !== new Date().getFullYear() ? ` ${dd.getFullYear()}` : '');
     $('#prevDay').style.visibility = 'visible';
     $('#nextDay').style.visibility = 'visible';
     $('#nextDay').disabled = state.date >= t;
@@ -252,6 +251,18 @@ function renderHeader() {
     $('#prevDay').style.visibility = 'hidden';
     $('#nextDay').style.visibility = 'hidden';
   }
+}
+async function renderGlance() {
+  const photos = (await DB.photosFor(state.date)).length;
+  const timed = state.day.log.map(e => e.time).filter(Boolean).sort();
+  const words = [state.day.notes, state.day.endOfDay, ...state.day.log.map(e => e.text)].join(' ').trim().split(/\s+/).filter(Boolean).length;
+  const item = (n, label) => `<div><b>${n}</b><span>${label}</span></div>`;
+  $('#glance').innerHTML = [
+    item(state.day.log.length, state.day.log.length === 1 ? 'entry' : 'entries'),
+    item(photos, photos === 1 ? 'photo' : 'photos'),
+    item(words, words === 1 ? 'word' : 'words'),
+    item(timed.length ? timed[0] : '—', 'first entry'),
+  ].join('');
 }
 function renderLog() {
   const list = $('#logList'); list.innerHTML = '';
@@ -274,6 +285,7 @@ function renderLog() {
   }
   $('#logEmpty').hidden = entries.length > 0;
   $('#logCount').textContent = entries.length ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}` : '';
+  renderGlance();
 }
 async function renderPhotos() {
   state.urls.forEach(u => URL.revokeObjectURL(u)); state.urls = [];
@@ -286,7 +298,8 @@ async function renderPhotos() {
     b.addEventListener('click', () => openPhoto(p, url));
     grid.appendChild(b);
   }
-  $('#photoEmpty').hidden = photos.length > 0;
+  grid.insertAdjacentHTML('beforeend', '<label class="add" for="photoInput" aria-label="Add photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></label>');
+  renderGlance();
 }
 function renderDay() {
   renderHeader();
@@ -468,7 +481,7 @@ $('#quickLog').addEventListener('submit', e => {
 });
 for (const k of ['notes', 'endOfDay']) {
   const el = $('#' + k);
-  el.addEventListener('input', () => { state.day[k] = el.value; autosize(el); scheduleSave(k); });
+  el.addEventListener('input', () => { state.day[k] = el.value; autosize(el); scheduleSave(k); renderGlance(); });
 }
 $('#photoInput').addEventListener('change', async e => {
   const files = [...e.target.files]; e.target.value = '';
