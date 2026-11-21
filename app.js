@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -114,14 +114,53 @@ function mergeDays(local, incoming) {
   return out;
 }
 function mdInlineToHTML(s) {
-  return esc(s)
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  const links = [];
+  let out = esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, t, u) => { links.push(`<a href="${u}" target="_blank" rel="noopener">${t}</a>`); return `\u0000${links.length - 1}\u0000`; })
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, p, u) => { links.push(`<a href="${u}" target="_blank" rel="noopener">${u.replace(/^https?:\/\//, '').replace(/\/$/, '')}</a>`); return `${p}\u0000${links.length - 1}\u0000`; })
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/__([^_]+)__/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<i>$2</i>')
+    .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<i>$2</i>')
+    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => links[+i]);
 }
-function mdBlockToHTML(s) {
-  const lines = s.split('\n').filter(l => l.trim());
-  if (lines.every(l => /^[-*]\s/.test(l))) return '<ul>' + lines.map(l => `<li>${mdInlineToHTML(l.replace(/^[-*]\s/, ''))}</li>`).join('') + '</ul>';
-  return lines.map(l => `<p>${mdInlineToHTML(l)}</p>`).join('');
+function mdToHTML(src) {
+  const lines = (src || '').replace(/\r/g, '').split('\n');
+  const html = [];
+  let list = null, para = [];
+  const flushPara = () => { if (para.length) { html.push(`<p>${para.map(mdInlineToHTML).join('<br>')}</p>`); para = []; } };
+  const closeList = () => { if (list) { html.push(`</${list}>`); list = null; } };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    let m;
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
+      flushPara(); closeList();
+      const lvl = Math.min(6, m[1].length + 2); // render page headings smaller than the app's own titles
+      html.push(`<h${lvl}>${mdInlineToHTML(m[2])}</h${lvl}>`); continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { flushPara(); closeList(); html.push('<hr>'); continue; }
+    if ((m = line.match(/^\s*[-*+•]\s+(?:\[( |x|X)\]\s+)?(.*)$/))) {
+      flushPara(); if (list !== 'ul') { closeList(); html.push('<ul>'); list = 'ul'; }
+      const box = m[1] !== undefined ? `<span class="check${m[1].trim() ? ' on' : ''}"></span>` : '';
+      html.push(`<li>${box}${mdInlineToHTML(m[2])}</li>`); continue;
+    }
+    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      flushPara(); if (list !== 'ol') { closeList(); html.push('<ol>'); list = 'ol'; }
+      html.push(`<li>${mdInlineToHTML(m[1])}</li>`); continue;
+    }
+    if ((m = line.match(/^>\s?(.*)$/))) { flushPara(); closeList(); html.push(`<blockquote>${mdInlineToHTML(m[1])}</blockquote>`); continue; }
+    closeList(); para.push(line.trim());
+  }
+  flushPara(); closeList();
+  return html.join('');
+}
+const mdBlockToHTML = mdToHTML;
+function mdToPlain(s) {
+  return (s || '').replace(/^#{1,6}\s+/gm, '').replace(/^\s*[-*+•]\s+(\[[ xX]\]\s+)?/gm, '').replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\*\*|__|~~|`/g, '').replace(/(^|\s)[*_]([^*_]+)[*_]/g, '$1$2').replace(/^>\s?/gm, '');
 }
 
 /* ---------- zip (store-only, no dependencies) ---------- */
@@ -305,11 +344,22 @@ function renderDay() {
   renderHeader();
   renderLog();
   renderPhotos();
-  for (const k of ['notes', 'endOfDay']) { const el = $('#' + k); el.value = state.day[k]; autosize(el); }
+  for (const k of ['notes', 'endOfDay']) { const el = $('#' + k); el.value = state.day[k]; showRendered(k); }
   const conv = (state.day.conversations || '').trim();
   $('#convCard').hidden = !conv;
   $('#convView').innerHTML = conv ? mdBlockToHTML(conv) : '';
   $('#quickInput').placeholder = state.date === todayISO() ? 'What did you just do?' : `Add to ${shortDate(state.date)}…`;
+}
+function showRendered(k) {
+  const el = $('#' + k), view = $('#' + k + 'View');
+  const has = !!(state.day[k] || '').trim();
+  view.innerHTML = has ? mdToHTML(state.day[k]) : '';
+  view.hidden = !has; el.hidden = has;
+  if (!has) autosize(el);
+}
+function editField(k) {
+  const el = $('#' + k), view = $('#' + k + 'View');
+  view.hidden = true; el.hidden = false; autosize(el); el.focus();
 }
 function openPhoto(p, url) {
   const dlg = $('#photoDialog');
@@ -371,7 +421,7 @@ async function renderJournal() {
   for (const date of sorted) {
     const day = dayBy[date] || blankDay(date);
     const ph = photoBy[date] || [];
-    const hay = [day.log.map(e => e.text).join(' '), day.notes, day.endOfDay, day.conversations, ph.map(p => p.caption).join(' ')].join(' ');
+    const hay = mdToPlain([day.log.map(e => e.text).join(' '), day.notes, day.endOfDay, day.conversations, ph.map(p => p.caption).join(' ')].join('\n'));
     if (q && !hay.toLowerCase().includes(q)) continue;
     if (++shown > 200) break;
     let snippet = day.endOfDay || day.log.map(e => e.text).join(' · ') || day.notes || day.conversations.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') || '';
@@ -379,7 +429,7 @@ async function renderJournal() {
       const i = hay.toLowerCase().indexOf(q);
       snippet = (i > 30 ? '…' : '') + hay.slice(Math.max(0, i - 30), i + 90);
     }
-    let html = esc(snippet.replace(/\s+/g, ' ').slice(0, 220));
+    let html = esc(mdToPlain(snippet).replace(/\s+/g, ' ').slice(0, 220));
     if (q) html = html.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => `<mark>${m}</mark>`);
     const meta = [day.log.length ? `${day.log.length} logged` : '', ph.length ? `${ph.length} photo${ph.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
     const card = document.createElement('button');
@@ -482,6 +532,8 @@ $('#quickLog').addEventListener('submit', e => {
 for (const k of ['notes', 'endOfDay']) {
   const el = $('#' + k);
   el.addEventListener('input', () => { state.day[k] = el.value; autosize(el); scheduleSave(k); renderGlance(); });
+  el.addEventListener('blur', () => showRendered(k));
+  $('#' + k + 'View').addEventListener('click', e => { if (!e.target.closest('a')) editField(k); });
 }
 $('#photoInput').addEventListener('change', async e => {
   const files = [...e.target.files]; e.target.value = '';
