@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.5.1';
+const VERSION = '1.6.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -449,7 +449,7 @@ function openPhoto(p, url) {
   const isReceipt = !!entry && /^Receipt\b/.test(entry.text);
   $('#photoShare').textContent = isReceipt ? (/sent to Dext/.test(entry.text) ? 'Send to Dext again' : 'Send to Dext') : 'Share';
   $('#photoShare').onclick = async () => {
-    if (isReceipt) { if (await sendReceipt(p.blob, p.date, p.time)) { markReceiptSent(entry); dlg.close(); } }
+    if (isReceipt) { if (await sendReceipt(p.blob, p.date, p.time, receiptNoteOf(entry))) { markReceiptSent(entry); dlg.close(); } }
     else await shareFile(new File([p.blob], `daybook-${p.date}.jpg`, { type: p.blob.type || 'image/jpeg' }), p.caption || 'Photo').catch(() => {});
   };
 }
@@ -463,11 +463,18 @@ async function shareFile(file, title) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   return false;
 }
-// Hands the receipt to the phone's share sheet with the Dext address ready to paste. Resolves true once shared.
-async function sendReceipt(blob, date, time) {
+const autoReceipts = () => typeof Sync !== 'undefined' && Sync.autoReceipts();
+const receiptNoteOf = entry => entry.text.replace(/^Receipt:?\s*/, '').replace(/\s*· sent to Dext$/, '');
+// Sends the receipt to Dext: by email from the journal's own sender when that is switched on, otherwise through
+// the phone's share sheet with the Dext address ready to paste. Resolves true once sent or shared.
+async function sendReceipt(blob, date, time, note) {
   const addr = dextAddr();
   if (!addr) { toast('Add your Dext address under More first'); return false; }
   const file = new File([blob], `receipt-${date}${time ? '-' + time.replace(':', '') : ''}.jpg`, { type: blob.type || 'image/jpeg' });
+  if (autoReceipts()) {
+    try { toast('Sending to Dext…'); await Sync.sendReceipt(blob, file.name, note); return true; }
+    catch (err) { toast(/failed to fetch|load failed/i.test(err.message) ? 'No connection. Receipt saved, open its photo to send it later.' : 'Could not send to Dext: ' + err.message); return false; }
+  }
   try { navigator.clipboard.writeText(addr).catch(() => {}); } catch {}
   try {
     const shared = await shareFile(file, 'Receipt');
@@ -477,7 +484,7 @@ async function sendReceipt(blob, date, time) {
 }
 function markReceiptSent(entry) {
   if (/sent to Dext/.test(entry.text)) return;
-  entry.text += ' · sent to Dext'; renderLog(); saveDay(); toast('Marked as sent to Dext');
+  entry.text += ' · sent to Dext'; renderLog(); saveDay(); toast(autoReceipts() ? 'Sent to Dext' : 'Marked as sent to Dext');
 }
 let receiptBlob = null;
 $('#receiptInput').addEventListener('change', async e => {
@@ -487,7 +494,9 @@ $('#receiptInput').addEventListener('change', async e => {
   $('#receiptImg').src = url; $('#receiptNote').value = '';
   const addr = dextAddr();
   $('#receiptSend').hidden = !addr;
-  $('#receiptHint').textContent = addr ? 'Send to Dext opens sharing. Choose Mail, paste the Dext address into To (it is copied for you) and send.' : 'To send receipts to Dext, add your Dext address under More, in Receipts.';
+  $('#receiptHint').textContent = !addr ? 'To send receipts to Dext, add your Dext address under More, in Receipts.'
+    : autoReceipts() ? 'Send to Dext emails this receipt straight to your Dext inbox.'
+    : 'Send to Dext opens sharing. Choose Mail, paste the Dext address into To (it is copied for you) and send.';
   const dlg = $('#receiptDialog'); dlg.showModal();
   dlg.addEventListener('close', () => URL.revokeObjectURL(url), { once: true });
 });
@@ -503,15 +512,17 @@ $('#receiptCancel').addEventListener('click', () => $('#receiptDialog').close())
 $('#receiptSave').addEventListener('click', async () => { await saveReceipt(); $('#receiptDialog').close(); toast('Receipt saved'); });
 $('#receiptSend').addEventListener('click', async () => {
   // share first: iPhone only allows the share sheet straight from a tap
-  const blob = receiptBlob, date = state.date, sent = await sendReceipt(blob, date, state.date === todayISO() ? nowHM() : '');
-  const { entry } = await saveReceipt(); $('#receiptDialog').close();
-  if (sent) markReceiptSent(entry); else toast('Receipt saved, not sent yet. Open its photo to send it.');
+  const btn = $('#receiptSend'), auto = autoReceipts(); btn.disabled = true;
+  const sent = await sendReceipt(receiptBlob, state.date, state.date === todayISO() ? nowHM() : '', $('#receiptNote').value.trim());
+  const { entry } = await saveReceipt(); $('#receiptDialog').close(); btn.disabled = false;
+  if (sent) markReceiptSent(entry); else if (!auto) toast('Receipt saved, not sent yet. Open its photo to send it.');
 });
 $('#dextEmail').addEventListener('change', e => {
   const v = e.target.value.trim();
   if (v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { toast('That does not look like an email address'); return; }
   try { v ? localStorage.setItem(DEXT_KEY, v) : localStorage.removeItem(DEXT_KEY); } catch {}
   toast(v ? 'Dext address saved' : 'Dext address removed');
+  if (typeof Sync !== 'undefined') Sync.profileChanged();
 });
 
 /* ---------- journal view ---------- */

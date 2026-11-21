@@ -2,14 +2,14 @@
 const Sync = (() => {
   const BASE = window.__DAYBOOK_SYNC_URL || 'https://iximbcxwyhnedeojjwsa.supabase.co';
   const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4aW1iY3h3eWhuZWRlb2pqd3NhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUyNjYxMzMsImV4cCI6MjExMDg0MjEzM30.KfzL7T2SfrjQ4te4tKFAu-ImplrHR56SFw8PknN0fWg';
-  const LS_SES = 'daybook.sync.session', LS_ST = 'daybook.sync.state';
+  const LS_SES = 'daybook.sync.session', LS_ST = 'daybook.sync.state', LS_AUTO = 'daybook.autoReceipts';
   const jget = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
   const jset = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} };
   const fresh = owner => ({ owner: owner || null, rev: { days: 0, photos: 0 }, dirty: { days: {}, photos: {} }, up: {}, last: 0 });
 
   let ses = jget(LS_SES);            // { access_token, refresh_token, expires_at, user: { id, email } }
   let st = jget(LS_ST) || fresh();   // per-device sync bookkeeping
-  let status = '', timer = null, running = null, again = false, refreshing = null, signup = false;
+  let status = '', timer = null, running = null, again = false, refreshing = null, signup = false, profDone = false;
   const saveSt = () => jset(LS_ST, st);
 
   /* ---- track local changes by wrapping the storage layer ---- */
@@ -22,7 +22,7 @@ const Sync = (() => {
 
   /* ---- session ---- */
   const setSes = j => { ses = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000, user: { id: j.user.id, email: j.user.email } }; jset(LS_SES, ses); };
-  const dropSes = () => { ses = null; jset(LS_SES, null); };
+  const dropSes = () => { ses = null; profDone = false; jset(LS_SES, null); jset(LS_AUTO, null); };
   const errText = async r => { let j = null; try { j = await r.json(); } catch {} return (j && (j.message || j.msg || j.error_description || j.error)) || ('Error ' + r.status); };
   function refresh() {
     if (refreshing) return refreshing;
@@ -155,6 +155,7 @@ const Sync = (() => {
       saveSt();
     }
     st.last = Date.now(); saveSt();
+    if (!profDone) await profileSync().catch(() => {});
     // show what arrived
     if (touched.size) {
       if (touched.has(state.date) && !unsaved()) {
@@ -167,6 +168,27 @@ const Sync = (() => {
       if (typeof hideWelcome === 'function' && !$('#welcome').hidden) hideWelcome();
     }
   }
+  /* ---- receipts: keep the Dext address with the account, and learn if automatic sending is on ---- */
+  async function profileSync() {
+    const local = dextAddr();
+    const rows = await (await need(await api('/rest/v1/profiles?select=dext_email'))).json();
+    const remote = (rows[0] && rows[0].dext_email) || '';
+    if (local && /@dext\.cc$/i.test(local) && local.toLowerCase() !== remote.toLowerCase()) {
+      await need(await api('/rest/v1/profiles?on_conflict=user_id', { method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify([{ user_id: ses.user.id, dext_email: local }]) }));
+    } else if (!local && remote) { try { localStorage.setItem(DEXT_KEY, remote); } catch {} const el = $('#dextEmail'); if (el) el.value = remote; }
+    const c = await (await need(await api('/functions/v1/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"check":true}' }))).json();
+    jset(LS_AUTO, c.configured && c.has_address ? 1 : null);
+    profDone = true;
+  }
+  const toBase64 = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+  async function sendReceipt(blob, filename, note) {
+    const r = await api('/functions/v1/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: await toBase64(blob), filename, note: note || '' }) });
+    if (r.ok) return true;
+    let j = {}; try { j = await r.json(); } catch {}
+    if (j.error === 'not_configured' || j.error === 'no_dext_address') jset(LS_AUTO, null);
+    throw new Error(j.error === 'send_failed' ? 'the email service refused it' : (j.error || 'error ' + r.status).replace(/_/g, ' '));
+  }
+
   function sync(manual) {
     if (!ses) return Promise.resolve();
     if (running) { again = true; return running; }
@@ -215,5 +237,5 @@ const Sync = (() => {
   window.addEventListener('online', () => schedule(500));
   if (ses && !st.owner) { st = fresh(ses.user.id); saveSt(); }
   render(); schedule(1200);
-  return { sync, render, signedIn: () => !!ses, state: () => st };
+  return { sync, render, signedIn: () => !!ses, state: () => st, sendReceipt, autoReceipts: () => !!ses && jget(LS_AUTO) === 1, profileChanged: () => { profDone = false; schedule(300); } };
 })();
