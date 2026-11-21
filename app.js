@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -263,7 +263,10 @@ function scheduleSave(field) {
   if (tag) tag.textContent = '…';
   saveTimer = setTimeout(async () => { await saveDay(); if (tag) { tag.textContent = 'Saved'; setTimeout(() => tag.textContent = '', 1500); } }, 500);
 }
+const dayKey = d => JSON.stringify([d.log, d.notes, d.conversations, d.media, d.endOfDay]);
 async function saveDay() {
+  if (dayKey(state.day) === state.savedKey) return;
+  state.savedKey = dayKey(state.day);
   state.day.updatedAt = Date.now();
   if (isEmptyDay(state.day) && !(await DB.photosFor(state.day.date)).length) await DB.deleteDay(state.day.date);
   else await DB.putDay(state.day);
@@ -277,6 +280,7 @@ async function loadDay(date) {
   state.date = date;
   state.day = (await DB.getDay(date)) || blankDay(date);
   for (const k of ['media', 'conversations']) if (state.day[k] == null) state.day[k] = '';
+  state.savedKey = dayKey(state.day);
   renderDay();
   const v = $('#view-day');
   v.classList.remove('slide-next', 'slide-prev');
@@ -584,6 +588,7 @@ function switchView(v) {
 async function renderMore() {
   $('#ver').textContent = VERSION;
   Lock.refresh();
+  if (typeof Sync !== 'undefined') Sync.render();
   let msg = 'Saved in this browser on this device.';
   if (navigator.storage?.estimate) {
     const { usage } = await navigator.storage.estimate();
@@ -800,9 +805,10 @@ const Lock = (() => {
   document.addEventListener('keydown', e => { if (!mode) return; if (/^\d$/.test(e.key)) press(e.key); else if (e.key === 'Backspace') press('del'); });
   $('#lockCancel').addEventListener('click', hide);
   $('#lockForgot').addEventListener('click', async () => {
-    if (!confirm('The passcode cannot be recovered. You can reset the lock, but that ERASES the journal stored on this device. Erase and reset?')) return;
+    if (!confirm('The passcode cannot be recovered. You can reset the lock, but that ERASES the journal stored on this device and signs it out of sync. Erase and reset?')) return;
     if (!confirm('Last check: delete every entry and photo on this device?')) return;
     await new Promise(r => { const q = indexedDB.deleteDatabase('daybook'); q.onsuccess = q.onerror = q.onblocked = r; });
+    try { localStorage.removeItem('daybook.sync.session'); localStorage.removeItem('daybook.sync.state'); } catch {}
     write(null); location.reload();
   });
   $('#lockSet').addEventListener('click', () => { const go = () => show('set1', refresh); read() ? show('verify', go) : go(); });

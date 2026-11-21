@@ -108,9 +108,28 @@
 
     <!-- MORE -->
     <section class="view" id="view-more" hidden>
+      <div class="card" id="syncCard">
+        <h2>Backup and sync</h2>
+        <div id="syncOut">
+          <p class="muted">Sign in to back up your journal and keep it in step across your devices.</p>
+          <form id="syncForm" class="syncform">
+            <input id="syncEmail" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+            <input id="syncPass" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
+            <input id="syncCode" type="text" placeholder="Invite code" autocomplete="off" autocapitalize="characters" spellcheck="false" hidden>
+            <button class="pill" id="syncGo" type="submit">Sign in</button>
+          </form>
+          <button class="row-btn" id="syncMode" type="button">New here? Create an account</button>
+        </div>
+        <div id="syncIn" hidden>
+          <p class="muted" id="syncWho"></p>
+          <p class="muted small" id="syncStatus"></p>
+          <button class="row-btn" id="syncNow">Sync now</button>
+          <button class="row-btn danger" id="syncOutBtn">Sign out</button>
+        </div>
+      </div>
       <div class="card">
         <h2>Back up and move</h2>
-        <p class="muted">Your journal lives only on this device. Export it regularly, or after a big day.</p>
+        <p class="muted">Export a copy of your journal to keep, or bring pages in from elsewhere.</p>
         <button class="row-btn" id="exportZip">Export everything (.zip of daily pages + photos)</button>
         <button class="row-btn" id="exportDay">Export the current day (.md)</button>
         <label class="row-btn" for="importInput">Import daily pages (.md or .zip)</label>
@@ -187,5 +206,6 @@
 
 <div class="toast" id="toast" role="status"></div>
 <script src="app.js"></script>
+<script src="sync.js"></script>
 </body>
 </html>
