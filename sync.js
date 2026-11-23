@@ -57,8 +57,8 @@ const Sync = (() => {
       !confirm('This device already holds a journal from a different account. Add it to this account?')) return false;
     setSes(j);
     if (st.owner !== j.user.id) {
-      st = fresh(j.user.id);
-      for (const d of days) st.dirty.days[d.date] = d.updatedAt || 1;
+      // first sign-in on this device: merge its days with the account's (never let an old copy replace newer entries)
+      st = fresh(j.user.id); st.merge = true;
       for (const p of photos) st.dirty.photos[p.id] = p.updatedAt || 1;
       saveSt();
     }
@@ -75,13 +75,29 @@ const Sync = (() => {
   const unsaved = () => state.day && dayKey(state.day) !== state.savedKey;
   async function run() {
     const uid_ = ses.user.id, touched = new Set();
-    // pull days
+    // pull days (a day skipped because it is being edited right now is pulled again next time)
+    let replay = null; const seen = new Set();
     for (;;) {
       const rows = await (await need(await api(`/rest/v1/days?select=date,data,updated_at,deleted,rev&rev=gt.${st.rev.days}&order=rev.asc&limit=500`))).json();
       for (const row of rows) {
+        if (st.merge) {
+          seen.add(row.date);
+          const local = await DB.getDay(row.date);
+          if (!row.deleted) {
+            const remote = { ...blankDay(row.date), ...dayData(row.data || {}), updatedAt: row.updated_at };
+            if (!local || isEmptyDay(local)) await raw.putDay(remote);
+            else if (dayKey(local) !== dayKey(remote)) { const m = mergeDays(remote, local); await raw.putDay(m); st.dirty.days[row.date] = m.updatedAt; }
+            else if (local.updatedAt !== row.updated_at) await raw.putDay({ ...local, updatedAt: row.updated_at });
+            touched.add(row.date);
+          }
+          st.rev.days = row.rev;
+          continue;
+        }
         const local = await DB.getDay(row.date), d = st.dirty.days[row.date];
         const localTs = local ? (local.updatedAt || 0) : (d || 0);
-        const keepLocal = (d && localTs >= row.updated_at) || (row.date === state.date && unsaved());
+        const editing = row.date === state.date && unsaved();
+        const keepLocal = (d && localTs >= row.updated_at) || editing;
+        if (editing && !(d && localTs >= row.updated_at) && replay == null) replay = row.rev - 1;
         const same = local && !row.deleted && local.updatedAt === row.updated_at;
         if (!keepLocal && !same) {
           if (row.deleted) { if (local) await raw.deleteDay(row.date); }
@@ -93,6 +109,11 @@ const Sync = (() => {
       saveSt();
       if (rows.length < 500) break;
     }
+    if (st.merge) {
+      for (const day of await DB.allDays()) if (!seen.has(day.date) && !isEmptyDay(day)) st.dirty.days[day.date] = day.updatedAt || Date.now();
+      st.merge = false; saveSt();
+    }
+    if (replay != null) { st.rev.days = Math.min(st.rev.days, replay); saveSt(); schedule(15000); }
     // pull photos
     let map = new Map((await DB.allPhotos()).map(p => [p.id, p]));
     for (;;) {
